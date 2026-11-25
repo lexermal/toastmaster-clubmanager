@@ -15,6 +15,13 @@
       "when": 1793050791381,
       "tag": "0001_polls-and-mentions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1795574201830,
+      "tag": "0002_tm-job-retries",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 /** Group-chat nudges: the role poll and the random speaker ping. Used by the scheduler and admin buttons. */
 import { and, eq, inArray, like } from 'drizzle-orm';
-import { PUBLIC_URL } from './club';
+import { PUBLIC_URL, ROLES_URL } from './club';
 import { db, schema } from './db';
 import type { Meeting } from './db/schema';
 import { formatMeetingDate } from './format';
@@ -107,7 +107,7 @@ export function queueSpeechPing(meeting: Meeting, dedupeSuffix = '') {
     meetingId: meeting.id,
     memberId: member.id,
     dedupeKey: `speech-ping-dm:${meeting.id}:${member.id}${dedupeSuffix}`,
-    body: `Hi ${member.name.split(' ')[0]}! One tap to take the speech slot on ${date}:\n${PUBLIC_URL}/claim/${claimToken(member.id, slot.role.id)}\n\nSpeech tips: ${PUBLIC_URL}/roles/speaker`,
+    body: `Hi ${member.name.split(' ')[0]}! One tap to take the speech slot on ${date}:\n${PUBLIC_URL}/claim/${claimToken(member.id, slot.role.id)}\n\nHow the roles work: ${ROLES_URL}`,
   });
   return { member };
 }

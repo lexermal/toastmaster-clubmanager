@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { notFound } from 'next/navigation';
 import { TimingLights } from '@/components/TimingLights';
+import { ROLES_URL } from '@/lib/club';
 import { db, schema } from '@/lib/db';
 import { formatMeetingDate, formatTime } from '@/lib/format';
 import { getMeeting, roleLabel } from '@/lib/meetings';
@@ -37,7 +38,7 @@ export default async function ClaimPage({ params }: { params: Promise<{ token: s
           {state === 'yours' && <p className="rounded-xl bg-go/10 p-3 font-semibold">It’s yours — see you there! ✅</p>}
           {state === 'taken' && <p className="rounded-xl bg-wait/15 p-3">Someone was faster. Reply “roles” to the club bot for other open roles.</p>}
         </div>
-        {guide && <a href={`/roles/${guide.slug}`} className="mt-4 inline-block text-sm text-maroon underline underline-offset-4">How the role works</a>}
+        {guide && <a href={ROLES_URL} className="mt-4 inline-block text-sm text-maroon underline underline-offset-4">How the role works</a>}
       </div>
     </div>
   );

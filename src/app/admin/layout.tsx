@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { TimingLights } from '@/components/TimingLights';
+import { TmStatusBanner } from '@/components/TmStatusBanner';
 import { requireAccess } from '@/lib/auth';
 import { logout } from './actions';
 
@@ -23,6 +24,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           <form action={logout}><button className="text-ink-soft hover:text-ink">Log out</button></form>
         </div>
       </header>
+      <TmStatusBanner />
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>
     </div>
   );

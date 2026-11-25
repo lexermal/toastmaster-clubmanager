@@ -2,6 +2,7 @@ import { count, eq } from 'drizzle-orm';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card } from '@/components/Card';
+import { MEETING_PAGE_URL } from '@/lib/club';
 import { db, schema } from '@/lib/db';
 import { formatMeetingDate, formatTime } from '@/lib/format';
 import { getMeeting, meetingGuests, meetingRoles, roleLabel } from '@/lib/meetings';
@@ -46,7 +47,7 @@ export default async function AdminMeetingPage({ params }: { params: Promise<{ i
             </>
           )}
           <Link href={`/admin/qr/${meeting.id}`} className="btn btn-ghost">QR poster</Link>
-          <Link href={`/m/${meeting.id}`} className="btn btn-ghost">Hub page</Link>
+          <a href={MEETING_PAGE_URL} className="btn btn-ghost">Meeting page</a>
           <Link href={`/tools?meeting=${meeting.id}`} className="btn btn-ghost">Tools</Link>
         </div>
       </div>

@@ -1,5 +1,5 @@
 /** WhatsApp message texts. WhatsApp formatting: *bold*, _italic_. */
-import { CLUB, PUBLIC_URL } from './club';
+import { MEETING_PAGE_URL, ROLES_URL } from './club';
 import type { Meeting, Member } from './db/schema';
 import { formatMeetingDate, formatTime } from './format';
 import { roleLabel, type RoleWithMember } from './meetings';
@@ -7,8 +7,8 @@ import { guideForRole } from './roles';
 
 const firstName = (m: Pick<Member, 'name'>) => m.name.split(/\s+/)[0];
 
-export function hubUrl(meeting: Pick<Meeting, 'id'>) {
-  return `${PUBLIC_URL}/m/${meeting.id}`;
+export function hubUrl() {
+  return MEETING_PAGE_URL;
 }
 
 function meetingLine(m: Meeting) {
@@ -47,7 +47,7 @@ export function meetingDayAnnouncement(meeting: Meeting, roles: RoleWithMember[]
     meeting.theme ? `Theme: _${meeting.theme}_` : '',
     meeting.wordOfTheDay ? `Word of the day: *${meeting.wordOfTheDay}*` : '',
     speakers.length ? `\n*Speeches*\n${speakers.map((s) => `• ${s.member!.name}${s.details ? ` — ${s.details}` : ''}`).join('\n')}` : '',
-    `\n*All links for tonight* (agenda, feedback, voting, guest check-in):\n${hubUrl(meeting)}`,
+    `\n*All links for tonight* (agenda and feedback):\n${hubUrl()}`,
     `\nBringing a friend? Guests are always welcome. See you there!`,
   ]
     .filter(Boolean)
@@ -59,7 +59,7 @@ export function roleReminder(meeting: Meeting, role: RoleWithMember) {
   return [
     `Hi ${firstName(role.member!)} 👋`,
     `Reminder: you are *${roleLabel(role)}* at the meeting on ${meetingLine(meeting)}.`,
-    guide ? `\n${guide.summary}\nHow the role works: ${PUBLIC_URL}/roles/${guide.slug}` : '',
+    guide ? `\n${guide.summary}\nHow the roles work: ${ROLES_URL}` : '',
     `\nCan't make it? Reply *drop* and I'll free the role for someone else.`,
   ]
     .filter(Boolean)
@@ -74,17 +74,9 @@ export function speechReminder(meeting: Meeting, role: RoleWithMember, evaluator
       : `Your speech is tomorrow — ${meetingLine(meeting)}.`,
     role.details ? `Project: ${role.details}` : '',
     evaluator?.member ? `Your evaluator: *${evaluator.member.name}* — tell them your project goals.` : '',
-    `\nTips & timing signals: ${PUBLIC_URL}/roles/speaker`,
+    `\nTips & timing signals: ${ROLES_URL}`,
     daysLeft > 1 ? `Rehearse with a timer and aim for the middle of your window. You've got this!` : `Good luck!`,
   ]
     .filter(Boolean)
     .join('\n');
-}
-
-export function guestWelcome(member: Member, meeting: Meeting) {
-  return [
-    `Hi ${firstName(member)}, welcome to ${CLUB.name}! 👋`,
-    `Tonight's agenda, feedback forms and voting: ${hubUrl(meeting)}`,
-    `After the meeting I'll send you a short summary here. Reply *stop* any time to opt out.`,
-  ].join('\n');
 }

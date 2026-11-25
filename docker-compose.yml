@@ -10,5 +10,7 @@ services:
       DATA_DIR: /data
     ports:
       - '3000:3000'
+      # Cloudflare human-check page (only open while a check is pending); put HTTPS in front of it.
+      - '8732:8732'
     volumes:
       - ./data:/data

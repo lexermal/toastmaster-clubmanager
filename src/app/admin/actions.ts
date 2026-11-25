@@ -103,3 +103,18 @@ export async function pingRandomSpeaker(id: number): Promise<string> {
   const res = queueSpeechPing(meeting, `:manual-${Date.now()}`);
   return res.error ?? `Pinging ${res.member!.name} in the group.`;
 }
+
+/** Re-arms tmclub.eu after a failed human check / rejected login; the worker picks it up within 20 s. */
+export async function retryTmClub() {
+  await requireAccess('admin');
+  setSetting('tm_reset_requested', '1');
+  setSetting('tm_sync_requested', '1');
+  revalidatePath('/admin', 'layout');
+}
+
+/** Put a failed role write back in the queue. */
+export async function retryTmJob(id: number) {
+  await requireAccess('admin');
+  db.update(schema.tmJobs).set({ status: 'pending', attempts: 0, nextAttemptAt: null, error: null }).where(eq(schema.tmJobs.id, id)).run();
+  revalidatePath('/admin');
+}

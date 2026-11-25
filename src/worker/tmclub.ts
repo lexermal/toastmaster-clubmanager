@@ -1,21 +1,34 @@
-import { and, eq, gt, notInArray } from 'drizzle-orm';
+import { and, asc, eq, isNull, lte, notInArray, or } from 'drizzle-orm';
 import path from 'node:path';
-import { TmClubClient, type MeetingDetails } from 'tmclub-api';
+import { HumanVerificationError, TmClubClient, type MeetingDetails, type UserRef } from 'tmclub-api';
 import { DATA_DIR, db, schema } from '../lib/db';
-import { enqueue } from '../lib/outbox';
+import type { Meeting, MeetingRole } from '../lib/db/schema';
+import { formatTime } from '../lib/format';
 import { roleLabel } from '../lib/meetings';
-import { setSetting } from '../lib/settings';
+import { enqueue } from '../lib/outbox';
+import { normalizePhone } from '../lib/phone';
+import { getSetting, setSetting } from '../lib/settings';
+
+const MIN = 60_000;
+/** Wait before retry n (temporary errors only); the last value repeats. */
+const BACKOFF = [1, 5, 15, 60].map((m) => m * MIN);
+/** ~6 hours of temporary failures before a job counts as permanently failed. */
+const MAX_ATTEMPTS = 10;
 
 let client: Promise<TmClubClient> | undefined;
 
 function tm() {
-  const { TMCLUB_USER, TMCLUB_PASSWORD, TMCLUB_CLUB_ID } = process.env;
+  const { TMCLUB_USER, TMCLUB_PASSWORD, TMCLUB_CLUB_ID, TMCLUB_VERIFY_URL, TMCLUB_VERIFY_PORT } = process.env;
   if (!TMCLUB_USER || !TMCLUB_PASSWORD) throw new Error('TMCLUB_USER / TMCLUB_PASSWORD not set');
   client ??= TmClubClient.connect({
     username: TMCLUB_USER,
     password: TMCLUB_PASSWORD,
     clubId: TMCLUB_CLUB_ID || undefined,
     sessionFile: path.join(DATA_DIR, 'tmclub-session.json'),
+    clearance: {
+      onHumanVerification: ({ url, expiresAt }) => announceHumanCheck(url, expiresAt),
+      verificationServer: { port: Number(TMCLUB_VERIFY_PORT) || 8732, publicUrl: TMCLUB_VERIFY_URL || undefined },
+    },
   }).catch((e) => {
     client = undefined;
     throw e;
@@ -25,27 +38,135 @@ function tm() {
 
 export const tmConfigured = () => Boolean(process.env.TMCLUB_USER && process.env.TMCLUB_PASSWORD);
 
-function memberIdFor(user: { userId: string; name: string }) {
+// ---- Health state ------------------------------------------------------------------------------
+
+/** Cloudflare wants a human: show the link in admin and send it to the officers on WhatsApp. */
+function announceHumanCheck(url: string, expiresAt: Date) {
+  setSetting('tm_state', 'needs-human');
+  setSetting('tm_verify_url', url);
+  setSetting('tm_verify_expires', expiresAt.toISOString());
+  for (const phone of adminPhones()) {
+    enqueue({
+      to: phone,
+      kind: 'tm-human-check',
+      dedupeKey: `tm-human-check:${url}:${phone}`,
+      body: `⚠️ tmclub.eu needs a quick human check (Cloudflare "Verify you are human").\nOpen this link and tick the box: ${url}\nValid until ${formatTime(expiresAt)}. Until then, role sign-ups are queued and will be written to tmclub.eu afterwards.`,
+    });
+  }
+}
+
+function adminPhones() {
+  return (process.env.ADMIN_PHONES ?? '')
+    .split(',')
+    .map((p) => normalizePhone(p))
+    .filter((p): p is string => !!p);
+}
+
+type Failure = 'blocked' | 'temporary';
+
+/**
+ * Blocked = only a person can fix it (human check not solved, login rejected): pause everything.
+ * Temporary = worth retrying by itself later (network, server errors).
+ */
+function classify(e: unknown): Failure {
+  if (e instanceof HumanVerificationError) return 'blocked';
+  const msg = e instanceof Error ? e.message : String(e);
+  return /cloudflare|login failed/i.test(msg) ? 'blocked' : 'temporary';
+}
+
+function markBlocked(e: unknown) {
+  const reason = e instanceof Error ? e.message : String(e);
+  const wasBlocked = getSetting('tm_state') === 'blocked';
+  setSetting('tm_state', 'blocked');
+  setSetting('tm_state_reason', reason);
+  setSetting('tm_verify_url', null);
+  setSetting('tm_verify_expires', null);
+  if (!wasBlocked) {
+    for (const phone of adminPhones()) {
+      enqueue({
+        to: phone,
+        kind: 'tm-blocked',
+        dedupeKey: `tm-blocked:${Date.now()}:${phone}`,
+        body: `⚠️ tmclub.eu sync is paused: ${reason}\nRole sign-ups keep working and are queued. Press "Retry now" in the club admin when ready.`,
+      });
+    }
+  }
+}
+
+function markOk() {
+  if (getSetting('tm_state') === 'ok') return;
+  setSetting('tm_state', 'ok');
+  setSetting('tm_state_reason', null);
+  setSetting('tm_verify_url', null);
+  setSetting('tm_verify_expires', null);
+}
+
+/**
+ * Called once per tmclub loop. Returns false while paused. The library makes failed human checks
+ * sticky on purpose (new browsers make Cloudflare stricter), so only an admin's "Retry now" re-arms it.
+ */
+export async function tmReady() {
+  if (getSetting('tm_reset_requested') === '1') {
+    setSetting('tm_reset_requested', null);
+    (await client?.catch(() => undefined))?.resetClearance();
+    client = undefined; // also retries a rejected login with fresh credentials
+    markOk();
+  }
+  return getSetting('tm_state') !== 'blocked';
+}
+
+/** Runs a tmclub task and updates the health state. Returns the failure kind, if any. */
+export async function guarded(name: string, fn: () => Promise<unknown>): Promise<Failure | undefined> {
+  try {
+    await fn();
+    markOk();
+  } catch (e) {
+    const kind = classify(e);
+    console.error(`[tmclub] ${name} failed (${kind}):`, e instanceof Error ? e.message : e);
+    if (kind === 'blocked') markBlocked(e);
+    else setSetting('tm_sync_error', e instanceof Error ? e.message : String(e));
+    return kind;
+  }
+}
+
+// ---- Sync --------------------------------------------------------------------------------------
+
+function memberIdFor(user: UserRef) {
   const existing = db.select().from(schema.members).where(eq(schema.members.tmUserId, user.userId)).get();
   if (existing) return existing.id;
   return db.insert(schema.members).values({ tmUserId: user.userId, name: user.name }).returning().get().id;
 }
 
+/**
+ * Role lines with a stable slot number. Non-officers don't see slot numbers for taken slots,
+ * so they're derived from the order on the page ("Speaker" ×3 → 1, 2, 3).
+ */
+function slotsOf(d: MeetingDetails) {
+  const seen = new Map<string, number>();
+  const counts = new Map<string, number>();
+  for (const r of d.roles) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
+  return d.roles.map((r) => {
+    const nth = (seen.get(r.role) ?? 0) + 1;
+    seen.set(r.role, nth);
+    return {
+      ...r,
+      slot: r.slot ?? r.volunteer?.slot ?? ((counts.get(r.role) ?? 1) > 1 ? nth : 0),
+      roleItemId: r.roleItemId ?? r.volunteer?.roleItemId,
+    };
+  });
+}
+
 /** Pull members and the next few meetings (with roles) from easy-Speak. */
 export async function syncFromTmClub(meetingsAhead = 4) {
   const api = await tm();
-
   for (const m of await api.getMembers()) {
     db.insert(schema.members)
       .values({ tmUserId: m.userId, name: m.name, clubRoles: m.clubRoles })
       .onConflictDoUpdate({ target: schema.members.tmUserId, set: { name: m.name, clubRoles: m.clubRoles } })
       .run();
   }
-
   const board = await api.getBoard();
-  for (const b of board.meetings.slice(0, meetingsAhead)) {
-    upsertMeeting(await api.getMeeting(b.meetingId));
-  }
+  for (const b of board.meetings.slice(0, meetingsAhead)) upsertMeeting(await api.getMeeting(b.meetingId));
   setSetting('tm_last_sync', new Date().toISOString());
   setSetting('tm_sync_error', null);
 }
@@ -68,27 +189,17 @@ function upsertMeeting(d: MeetingDetails) {
     .returning()
     .get();
 
-  // Non-officers don't see slot numbers for taken slots; derive them from the order on the page.
-  const seen = new Map<string, number>();
-  const counts = new Map<string, number>();
-  for (const r of d.roles) counts.set(r.role, (counts.get(r.role) ?? 0) + 1);
-
   const keptIds: number[] = [];
-  for (const r of d.roles) {
-    const nth = (seen.get(r.role) ?? 0) + 1;
-    seen.set(r.role, nth);
-    const slot = r.slot ?? r.volunteer?.slot ?? ((counts.get(r.role) ?? 1) > 1 ? nth : 0);
-    const roleItemId = r.roleItemId ?? r.volunteer?.roleItemId ?? null;
-
+  for (const r of slotsOf(d)) {
     const existing = db
       .select()
       .from(schema.meetingRoles)
-      .where(and(eq(schema.meetingRoles.meetingId, meeting.id), eq(schema.meetingRoles.role, r.role), eq(schema.meetingRoles.slot, slot)))
+      .where(and(eq(schema.meetingRoles.meetingId, meeting.id), eq(schema.meetingRoles.role, r.role), eq(schema.meetingRoles.slot, r.slot)))
       .get();
-    // A claim made here that hasn't reached easy-Speak yet wins over the stale page.
+    // A claim made here that hasn't reached easy-Speak yet wins over the (older) page.
     if (existing?.pendingSync) {
-      if (roleItemId && !existing.roleItemId) {
-        db.update(schema.meetingRoles).set({ roleItemId }).where(eq(schema.meetingRoles.id, existing.id)).run();
+      if (r.roleItemId && !existing.roleItemId) {
+        db.update(schema.meetingRoles).set({ roleItemId: r.roleItemId }).where(eq(schema.meetingRoles.id, existing.id)).run();
       }
       keptIds.push(existing.id);
       continue;
@@ -96,9 +207,9 @@ function upsertMeeting(d: MeetingDetails) {
     const row = {
       meetingId: meeting.id,
       role: r.role,
-      slot,
+      slot: r.slot,
       // Keep a previously seen id: easy-Speak hides it for taken slots unless we're an officer.
-      roleItemId: roleItemId ?? existing?.roleItemId ?? null,
+      roleItemId: r.roleItemId ?? existing?.roleItemId ?? null,
       memberId: r.presenter ? memberIdFor(r.presenter) : null,
       details: r.details ?? null,
       confirmed: r.confirmed ?? null,
@@ -118,55 +229,125 @@ function upsertMeeting(d: MeetingDetails) {
   }
 }
 
-/** Push role claims / releases made via WhatsApp or claim links to easy-Speak. */
-export async function processTmJobs() {
-  const jobs = db.select().from(schema.tmJobs).where(eq(schema.tmJobs.status, 'pending')).all();
+// ---- Role write-back queue ---------------------------------------------------------------------
+
+type Job = typeof schema.tmJobs.$inferSelect;
+
+/** A job that can never succeed: undo it locally and tell the member. */
+class PermanentError extends Error {}
+
+function finish(job: Job, status: 'done' | 'error', error?: string) {
+  db.update(schema.tmJobs).set({ status, error: error ?? null }).where(eq(schema.tmJobs.id, job.id)).run();
+  const stillQueued = db
+    .select()
+    .from(schema.tmJobs)
+    .where(eq(schema.tmJobs.status, 'pending'))
+    .all()
+    .some((j) => j.payload.meetingRoleId === job.payload.meetingRoleId);
+  if (!stillQueued) {
+    db.update(schema.meetingRoles).set({ pendingSync: false }).where(eq(schema.meetingRoles.id, job.payload.meetingRoleId)).run();
+  }
+}
+
+/**
+ * Push role claims / releases to easy-Speak. Jobs may wait hours (e.g. while the human check is
+ * pending), so each one first re-reads the slot on easy-Speak and only writes what is still needed.
+ */
+export async function processTmJobs(now = Date.now(), getApi: () => Promise<Pick<TmClubClient, 'getMeeting' | 'assignRole' | 'unassignRole'>> = tm) {
+  const jobs = db
+    .select()
+    .from(schema.tmJobs)
+    .where(and(eq(schema.tmJobs.status, 'pending'), or(isNull(schema.tmJobs.nextAttemptAt), lte(schema.tmJobs.nextAttemptAt, new Date(now)))))
+    .orderBy(asc(schema.tmJobs.id))
+    .all();
   if (!jobs.length) return;
-  const api = await tm();
+  const api = await getApi();
+  /** Fresh easy-Speak state per meeting, re-read once per run and updated after each write. */
+  const fresh = new Map<string, MeetingDetails>();
+  const touched = new Set<string>();
 
   for (const job of jobs) {
     const role = db.select().from(schema.meetingRoles).where(eq(schema.meetingRoles.id, job.payload.meetingRoleId)).get();
     const meeting = role && db.select().from(schema.meetings).where(eq(schema.meetings.id, role.meetingId)).get();
     try {
-      if (!role || !meeting?.tmMeetingId) throw new Error('Role or meeting not found');
-      if (!role.roleItemId) throw new Error('easy-Speak role id unknown — the sync account needs officer rights');
-      if (job.kind === 'assignRole') {
-        const member = role.memberId
-          ? db.select().from(schema.members).where(eq(schema.members.id, role.memberId)).get()
-          : undefined;
-        if (!member?.tmUserId) throw new Error('Member has no easy-Speak id');
-        await api.assignRole(meeting.tmMeetingId, role.roleItemId, role.slot, member.tmUserId);
-      } else {
-        await api.unassignRole(meeting.tmMeetingId, role.roleItemId, role.slot);
+      if (!role || !meeting?.tmMeetingId) throw new PermanentError('Role or meeting no longer exists');
+      // Nothing to fix and nobody to tell once the meeting is over.
+      if (meeting.startsAt.getTime() < now) {
+        finish(job, 'error', 'Meeting already took place');
+        continue;
       }
-      db.update(schema.tmJobs).set({ status: 'done' }).where(eq(schema.tmJobs.id, job.id)).run();
-      // Only clear the flag if no newer job for this role is still waiting.
-      const newer = db
-        .select()
-        .from(schema.tmJobs)
-        .where(and(eq(schema.tmJobs.status, 'pending'), gt(schema.tmJobs.id, job.id)))
-        .all()
-        .some((j) => j.payload.meetingRoleId === role.id);
-      if (!newer) db.update(schema.meetingRoles).set({ pendingSync: false }).where(eq(schema.meetingRoles.id, role.id)).run();
+      const details = fresh.get(meeting.tmMeetingId) ?? (await api.getMeeting(meeting.tmMeetingId));
+      fresh.set(meeting.tmMeetingId, details);
+      touched.add(meeting.tmMeetingId);
+      const updated = await applyJob(api, job, role, meeting, details);
+      if (updated) fresh.set(meeting.tmMeetingId, updated);
+      finish(job, 'done');
     } catch (e) {
+      if (e instanceof PermanentError) {
+        console.error(`[tmclub] job ${job.id} dropped:`, e.message);
+        finish(job, 'error', e.message);
+        if (role && job.kind === 'assignRole') undoClaim(role, job, e.message);
+        continue;
+      }
+      const kind = classify(e);
+      if (kind === 'blocked') throw e; // pause the whole queue; the job keeps its place
+      const attempts = job.attempts + 1;
       const error = e instanceof Error ? e.message : String(e);
-      console.error(`[tmclub] job ${job.id} failed:`, error);
-      db.update(schema.tmJobs).set({ status: 'error', error }).where(eq(schema.tmJobs.id, job.id)).run();
-      if (role && job.kind === 'assignRole' && role.memberId) {
-        // Undo locally so the board matches easy-Speak again, and tell the member.
-        db.update(schema.meetingRoles).set({ memberId: null, pendingSync: false }).where(eq(schema.meetingRoles.id, role.id)).run();
-        const member = db.select().from(schema.members).where(eq(schema.members.id, role.memberId)).get();
-        if (member?.phone) {
-          enqueue({
-            to: member.phone,
-            kind: 'role-sync-failed',
-            memberId: member.id,
-            body: `Sorry, I couldn't register you as ${roleLabel(role)} on tmclub.eu. Please sign up there directly or ask an officer.`,
-          });
-        }
-      } else if (role) {
-        db.update(schema.meetingRoles).set({ pendingSync: false }).where(eq(schema.meetingRoles.id, role.id)).run();
+      if (attempts >= MAX_ATTEMPTS) {
+        finish(job, 'error', error);
+        if (role && job.kind === 'assignRole') undoClaim(role, job, error);
+      } else {
+        const wait = BACKOFF[Math.min(attempts - 1, BACKOFF.length - 1)];
+        db.update(schema.tmJobs).set({ attempts, error, nextAttemptAt: new Date(now + wait) }).where(eq(schema.tmJobs.id, job.id)).run();
       }
     }
   }
+  // Bring the local board in line with what easy-Speak now shows.
+  for (const id of touched) {
+    const d = fresh.get(id);
+    if (d) upsertMeeting(d);
+  }
+}
+
+/** Returns the meeting as easy-Speak shows it after the write, or undefined if nothing was written. */
+async function applyJob(api: Pick<TmClubClient, 'assignRole' | 'unassignRole'>, job: Job, role: MeetingRole, meeting: Meeting, details: MeetingDetails) {
+  const slot = slotsOf(details).find((s) => s.role === role.role && s.slot === role.slot);
+  if (!slot) throw new PermanentError(`${roleLabel(role)} is no longer on the agenda`);
+  const roleItemId = slot.roleItemId ?? role.roleItemId;
+  const occupant = slot.presenter?.userId;
+  const jobMember = job.payload.memberId ?? role.memberId;
+  const member = jobMember ? db.select().from(schema.members).where(eq(schema.members.id, jobMember)).get() : undefined;
+
+  if (job.kind === 'assignRole') {
+    // Released again before we got to it: a later unassign job covers it (or nothing is needed).
+    if (role.memberId !== jobMember) return;
+    if (!member?.tmUserId) throw new PermanentError('Member has no tmclub.eu account');
+    if (occupant === member.tmUserId) return;
+    if (occupant) throw new PermanentError(`${slot.presenter!.name} took this role on tmclub.eu in the meantime`);
+    if (!roleItemId) throw new PermanentError('tmclub.eu hides this role — the sync account needs officer rights');
+    return api.assignRole(meeting.tmMeetingId!, roleItemId, role.slot, member.tmUserId);
+  }
+
+  // Only remove the person we put there — never someone who signed up on tmclub.eu since.
+  if (!occupant || occupant !== member?.tmUserId) return;
+  if (!roleItemId) throw new PermanentError('tmclub.eu hides this role — the sync account needs officer rights');
+  return api.unassignRole(meeting.tmMeetingId!, roleItemId, role.slot);
+}
+
+function undoClaim(role: MeetingRole, job: Job, reason: string) {
+  const memberId = job.payload.memberId ?? role.memberId;
+  if (!memberId) return;
+  db.update(schema.meetingRoles)
+    .set({ memberId: null, pendingSync: false })
+    .where(and(eq(schema.meetingRoles.id, role.id), eq(schema.meetingRoles.memberId, memberId)))
+    .run();
+  const member = db.select().from(schema.members).where(eq(schema.members.id, memberId)).get();
+  if (!member?.phone || member.muted) return;
+  enqueue({
+    to: member.phone,
+    kind: 'role-sync-failed',
+    memberId: member.id,
+    dedupeKey: `role-sync-failed:${job.id}`,
+    body: `Sorry, I couldn't put you down as *${roleLabel(role)}* on tmclub.eu (${reason}). Reply *roles* to see what's still open.`,
+  });
 }

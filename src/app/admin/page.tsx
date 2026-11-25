@@ -1,4 +1,4 @@
-import { desc } from 'drizzle-orm';
+import { and, desc, eq, gt } from 'drizzle-orm';
 import Link from 'next/link';
 import QRCode from 'qrcode';
 import { AutoRefresh } from '@/components/AutoRefresh';
@@ -6,7 +6,7 @@ import { Card } from '@/components/Card';
 import { db, schema } from '@/lib/db';
 import { formatMeetingDate, formatTime } from '@/lib/format';
 import { getSetting } from '@/lib/settings';
-import { cancelOutbox, chooseGroup, requestSync, retryOutbox, sendTestMessage } from './actions';
+import { cancelOutbox, chooseGroup, requestSync, retryOutbox, retryTmJob, sendTestMessage } from './actions';
 
 const STATUS: Record<string, string> = {
   connected: 'Connected',
@@ -25,6 +25,15 @@ export default async function AdminDashboard() {
   const syncError = getSetting('tm_sync_error');
   const syncRequested = getSetting('tm_sync_requested') === '1';
 
+  const pendingJobs = db.select().from(schema.tmJobs).where(eq(schema.tmJobs.status, 'pending')).all().length;
+  // Recent failures only; old ones are history.
+  const failedJobs = db
+    .select()
+    .from(schema.tmJobs)
+    .where(and(eq(schema.tmJobs.status, 'error'), gt(schema.tmJobs.createdAt, new Date(Date.now() - 7 * 24 * 3600_000))))
+    .orderBy(desc(schema.tmJobs.id))
+    .limit(5)
+    .all();
   const meetings = db.select().from(schema.meetings).orderBy(desc(schema.meetings.startsAt)).limit(12).all();
   const outbox = db.select().from(schema.outbox).orderBy(desc(schema.outbox.id)).limit(40).all();
   const recipients = new Map(
@@ -63,9 +72,26 @@ export default async function AdminDashboard() {
         </Card>
 
         <Card title="tmclub.eu sync" action={<form action={requestSync}><button className="btn btn-ghost !py-1.5 text-sm" disabled={syncRequested}>{syncRequested ? 'Syncing…' : 'Sync now'}</button></form>}>
-          <p className="text-sm">Last sync: {lastSync ? new Date(lastSync).toLocaleString('en-GB') : 'never'}</p>
-          {syncError && <p className="mt-2 text-sm text-stop">Error: {syncError}</p>}
-          <p className="mt-2 text-sm text-ink-soft">Runs every 15 minutes. Role sign-ups from WhatsApp are pushed within seconds.</p>
+          <p className="text-sm">
+            Last sync: {lastSync ? `${new Date(lastSync).toLocaleString('en-GB')} (${ago(lastSync)})` : 'never'}
+          </p>
+          {syncError && <p className="mt-2 text-sm text-stop">Last error: {syncError}</p>}
+          <p className="mt-2 text-sm">
+            {pendingJobs ? `${pendingJobs} role change${pendingJobs === 1 ? '' : 's'} waiting to be written to tmclub.eu.` : 'All role changes are on tmclub.eu.'}
+          </p>
+          {failedJobs.length > 0 && (
+            <ul className="mt-3 flex flex-col gap-2 text-sm">
+              {failedJobs.map((j) => (
+                <li key={j.id} className="rounded-xl border border-line p-2.5">
+                  <span className="font-semibold">{j.kind === 'assignRole' ? 'Sign-up' : 'Release'} failed:</span> {j.error}
+                  <form action={retryTmJob.bind(null, j.id)} className="inline">
+                    <button className="ml-2 text-maroon">Retry</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="mt-2 text-sm text-ink-soft">Syncs every 15 minutes. Sign-ups from WhatsApp are confirmed right away and written to tmclub.eu in the background, with retries.</p>
         </Card>
 
         <Card title="Meetings">
@@ -117,4 +143,11 @@ export default async function AdminDashboard() {
       </Card>
     </div>
   );
+}
+
+function ago(iso: string) {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  return h < 48 ? `${h} h ago` : `${Math.round(h / 24)} days ago`;
 }

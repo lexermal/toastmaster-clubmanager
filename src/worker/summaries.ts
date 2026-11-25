@@ -1,6 +1,6 @@
 import { and, asc, eq, gt, isNull } from 'drizzle-orm';
 import { summarizeAudienceFeedback, summarizeEvaluation, transcribe } from '../lib/ai';
-import { CLUB, PUBLIC_URL } from '../lib/club';
+import { CLUB, PUBLIC_URL, WEBSITE_URL } from '../lib/club';
 import { db, schema } from '../lib/db';
 import type { Meeting, Member } from '../lib/db/schema';
 import { formatMeetingDate } from '../lib/format';
@@ -147,7 +147,7 @@ export async function buildSummaries(meeting: Meeting, opts: { ai?: boolean } = 
     }
 
     if (member.isGuest) {
-      parts.push(`🌱 *Enjoyed it?* Come again any time — or become a member: ${PUBLIC_URL}/membership`);
+      parts.push(`🌱 *Enjoyed it?* Come again any time, or become a member: ${WEBSITE_URL}/membership/`);
     } else if (next) {
       parts.push(nextStepCta(member, myRoles, next, nextRoles));
     }

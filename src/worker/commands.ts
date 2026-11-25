@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import { CLUB, PUBLIC_URL } from '../lib/club';
+import { CLUB, ROLES_URL } from '../lib/club';
 import { db, schema } from '../lib/db';
 import { formatMeetingDate, formatTime } from '../lib/format';
 import { claimRole, meetingRoles, releaseRole, roleLabel, upcomingMeetings } from '../lib/meetings';
@@ -76,7 +76,7 @@ function take(memberId: number, n: number) {
   if (error) return error;
   const guide = guideForRole(role.role);
   return `✅ You are *${roleLabel(role)}* on ${header(meeting)}.${
-    guide ? `\nHow the role works: ${PUBLIC_URL}/roles/${guide.slug}` : ''
+    guide ? `\nHow the roles work: ${ROLES_URL}` : ''
   }\nI'll remind you before the meeting.`;
 }
 
@@ -143,5 +143,5 @@ export async function handlePollVote(phone: string, poll: typeof schema.polls.$i
   }
   save(chosen.meetingRoleId);
   const guide = guideForRole(chosen.label.replace(/\s+\d+$/, ''));
-  return `✅ You're *${chosen.label}*!${guide ? ` How it works: ${PUBLIC_URL}/roles/${guide.slug}` : ''}`;
+  return `✅ You're *${chosen.label}*!${guide ? ` How the roles work: ${ROLES_URL}` : ''}`;
 }

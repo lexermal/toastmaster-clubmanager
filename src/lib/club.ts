@@ -5,11 +5,11 @@ export const CLUB = {
   tagline: 'Find your voice by the Öresund.',
   city: 'Malmö',
   timezone: 'Europe/Stockholm',
-  founded: 2009,
+  founded: 2010,
   clubNumber: '01519351',
-  district: 'District 107',
+  district: 'District 95',
   language: 'English',
-  schedule: 'Every second Monday (even weeks), 17:45–19:45',
+  schedule: 'Every second Monday (even weeks), 18:00–19:40, doors open 17:45',
   venue: {
     name: 'Studieförbundet Vuxenskolan',
     address: 'Malmö city centre',
@@ -31,3 +31,9 @@ export const CLUB = {
 } as const;
 
 export const PUBLIC_URL = (process.env.PUBLIC_URL ?? 'http://localhost:3000').replace(/\/$/, '');
+
+// Public pages (home, roles, membership, ...) live on the WordPress site; this app only links to them.
+export const WEBSITE_URL = (process.env.WEBSITE_URL ?? 'https://malmo-tm.infinityfreeapp.com').replace(/\/$/, '');
+/** WordPress page with the meeting tools plugin (agenda, feedback forms). Target of the QR code. */
+export const MEETING_PAGE_URL = (process.env.MEETING_PAGE_URL || WEBSITE_URL).replace(/\/$/, '');
+export const ROLES_URL = `${WEBSITE_URL}/roles/`;

@@ -110,7 +110,7 @@ export function claimRole(meetingRoleId: number, memberId: number): { error?: st
     .where(and(eq(schema.meetingRoles.id, meetingRoleId), isNull(schema.meetingRoles.memberId)))
     .run();
   if (res.changes === 0) return { error: 'Someone else took this role already.' };
-  db.insert(schema.tmJobs).values({ kind: 'assignRole', payload: { meetingRoleId } }).run();
+  db.insert(schema.tmJobs).values({ kind: 'assignRole', payload: { meetingRoleId, memberId } }).run();
   return { role: { ...role, memberId } };
 }
 
@@ -121,7 +121,7 @@ export function releaseRole(meetingRoleId: number, memberId: number) {
     .set({ memberId: null, pendingSync: true, confirmed: null })
     .where(and(eq(schema.meetingRoles.id, meetingRoleId), eq(schema.meetingRoles.memberId, memberId)))
     .run();
-  if (res.changes) db.insert(schema.tmJobs).values({ kind: 'unassignRole', payload: { meetingRoleId } }).run();
+  if (res.changes) db.insert(schema.tmJobs).values({ kind: 'unassignRole', payload: { meetingRoleId, memberId } }).run();
   return res.changes > 0;
 }
 

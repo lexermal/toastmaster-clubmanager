@@ -186,9 +186,13 @@ export const outbox = sqliteTable('outbox', {
 export const tmJobs = sqliteTable('tm_jobs', {
   id: id(),
   kind: text('kind', { enum: ['assignRole', 'unassignRole'] }).notNull(),
-  payload: text('payload', { mode: 'json' }).$type<{ meetingRoleId: number }>().notNull(),
+  /** memberId = who the role was claimed by / released from, so outdated jobs can be recognised. */
+  payload: text('payload', { mode: 'json' }).$type<{ meetingRoleId: number; memberId?: number }>().notNull(),
   status: text('status', { enum: ['pending', 'done', 'error'] }).notNull().default('pending'),
   error: text('error'),
+  /** Temporary failures only; time blocked by Cloudflare / login doesn't count. */
+  attempts: integer('attempts').notNull().default(0),
+  nextAttemptAt: integer('next_attempt_at', { mode: 'timestamp_ms' }),
   createdAt: createdAt(),
 });
 

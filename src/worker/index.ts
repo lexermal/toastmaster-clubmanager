@@ -9,7 +9,7 @@ const { getSetting, setSetting } = await import('../lib/settings');
 const { handleCommand, handlePollVote } = await import('./commands');
 const { autoFinishMeetings, queueDueMessages } = await import('./scheduler');
 const { processEvaluations, queueSummaries } = await import('./summaries');
-const { processTmJobs, syncFromTmClub, tmConfigured } = await import('./tmclub');
+const { guarded, processTmJobs, syncFromTmClub, tmConfigured, tmReady } = await import('./tmclub');
 const { isWhatsAppReady, refreshGroups, sendWhatsApp, startWhatsApp } = await import('./whatsapp');
 
 const TICK = 20_000;
@@ -20,13 +20,13 @@ const MAX_ATTEMPTS = 5;
 
 let lastSync = 0;
 let ticking = false;
+let tmBusy = false;
 
 async function step(name: string, fn: () => unknown) {
   try {
     await fn();
   } catch (e) {
     console.error(`[worker] ${name} failed:`, e instanceof Error ? e.message : e);
-    if (name === 'sync') setSetting('tm_sync_error', e instanceof Error ? e.message : String(e));
   }
 }
 
@@ -51,20 +51,11 @@ async function flushOutbox() {
   }
 }
 
+/** Everything that only needs our own database: never waits on tmclub.eu. */
 async function tick() {
-  if (ticking) return; // a slow sync must not overlap with the next tick
+  if (ticking) return;
   ticking = true;
   try {
-    if (tmConfigured()) {
-      const requested = getSetting('tm_sync_requested') === '1';
-      if (requested || Date.now() - lastSync > SYNC_EVERY) {
-        lastSync = Date.now();
-        setSetting('tm_sync_requested', null);
-        await step('sync', () => syncFromTmClub());
-        await step('groups', refreshGroups);
-      }
-      await step('tm-jobs', processTmJobs);
-    }
     await step('auto-finish', () => autoFinishMeetings());
     await step('schedule', () => queueDueMessages());
     await step('evaluations', processEvaluations);
@@ -72,6 +63,27 @@ async function tick() {
     await step('outbox', flushOutbox);
   } finally {
     ticking = false;
+  }
+}
+
+/**
+ * tmclub.eu runs in its own loop: a pending human check can make a call wait up to 15 minutes,
+ * and reminders, recaps and polls must keep going meanwhile.
+ */
+async function tmTick() {
+  if (tmBusy || !tmConfigured()) return;
+  tmBusy = true;
+  try {
+    if (!(await tmReady())) return;
+    const requested = getSetting('tm_sync_requested') === '1';
+    if (requested || Date.now() - lastSync > SYNC_EVERY) {
+      lastSync = Date.now();
+      setSetting('tm_sync_requested', null);
+      if ((await guarded('sync', () => syncFromTmClub())) === 'blocked') return;
+    }
+    await guarded('role queue', () => processTmJobs());
+  } finally {
+    tmBusy = false;
   }
 }
 
@@ -83,3 +95,7 @@ if (process.env.WHATSAPP_ENABLED !== 'false') {
 console.log('[worker] started');
 await tick();
 setInterval(tick, TICK);
+void tmTick();
+setInterval(tmTick, TICK);
+// Group list only changes when the bot is added somewhere; refresh it with the sync cadence.
+setInterval(() => step('groups', refreshGroups), SYNC_EVERY);
