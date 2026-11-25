@@ -85,7 +85,6 @@ export const timings = sqliteTable('timings', {
     .references(() => meetings.id, { onDelete: 'cascade' }),
   memberId: integer('member_id').references(() => members.id, { onDelete: 'set null' }),
   speakerName: text('speaker_name').notNull(),
-  /** Timing preset key, see TIMING_PRESETS. */
   kind: text('kind').notNull(),
   label: text('label').notNull(),
   greenSec: integer('green_sec').notNull(),

@@ -8,7 +8,7 @@ const { db, schema } = await import('../lib/db');
 const { getSetting, setSetting } = await import('../lib/settings');
 const { handleCommand, handlePollVote } = await import('./commands');
 const { autoFinishMeetings, queueDueMessages } = await import('./scheduler');
-const { processEvaluations, queueSummaries } = await import('./summaries');
+const { queueSummaries } = await import('./summaries');
 const { guarded, processTmJobs, syncFromTmClub, tmConfigured, tmReady } = await import('./tmclub');
 const { isWhatsAppReady, refreshGroups, sendWhatsApp, startWhatsApp } = await import('./whatsapp');
 
@@ -58,7 +58,6 @@ async function tick() {
   try {
     await step('auto-finish', () => autoFinishMeetings());
     await step('schedule', () => queueDueMessages());
-    await step('evaluations', processEvaluations);
     await step('summaries', () => queueSummaries());
     await step('outbox', flushOutbox);
   } finally {

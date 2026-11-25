@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, isNull } from 'drizzle-orm';
-import { summarizeAudienceFeedback, summarizeEvaluation, transcribe } from '../lib/ai';
+import { summarizeAudienceFeedback } from '../lib/ai';
 import { CLUB, PUBLIC_URL, WEBSITE_URL } from '../lib/club';
 import { db, schema } from '../lib/db';
 import type { Meeting, Member } from '../lib/db/schema';
@@ -12,26 +12,6 @@ import { claimToken } from '../lib/tokens';
 const MIN = 60_000;
 /** Give the audience a few minutes to submit late feedback before summaries go out. */
 const FEEDBACK_GRACE = 10 * MIN;
-/** Don't wait for a stuck transcription forever. */
-const TRANSCRIPTION_WAIT = 60 * MIN;
-
-/** Transcribe + summarise recorded evaluations, one at a time. */
-export async function processEvaluations() {
-  const pending = db.select().from(schema.evaluations).where(eq(schema.evaluations.status, 'processing')).all();
-  for (const ev of pending) {
-    try {
-      const member = db.select().from(schema.members).where(eq(schema.members.id, ev.memberId)).get();
-      const transcript = ev.transcript ?? (await transcribe(ev.audioPath));
-      db.update(schema.evaluations).set({ transcript }).where(eq(schema.evaluations.id, ev.id)).run();
-      const summary = await summarizeEvaluation({ transcript, about: ev.about, name: member?.name ?? 'the speaker' });
-      db.update(schema.evaluations).set({ summary, status: 'done', error: null }).where(eq(schema.evaluations.id, ev.id)).run();
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      console.error(`[ai] evaluation ${ev.id} failed:`, error);
-      db.update(schema.evaluations).set({ status: 'error', error }).where(eq(schema.evaluations.id, ev.id)).run();
-    }
-  }
-}
 
 export async function queueSummaries(now = Date.now()) {
   const due = db
@@ -42,13 +22,6 @@ export async function queueSummaries(now = Date.now()) {
     .filter((m) => m.finishedAt && now - m.finishedAt.getTime() >= FEEDBACK_GRACE);
 
   for (const meeting of due) {
-    const stillTranscribing = db
-      .select()
-      .from(schema.evaluations)
-      .where(and(eq(schema.evaluations.meetingId, meeting.id), eq(schema.evaluations.status, 'processing')))
-      .get();
-    if (stillTranscribing && now - meeting.finishedAt!.getTime() < TRANSCRIPTION_WAIT) continue;
-
     // Mark first: if building one summary crashes we'd rather miss it than spam everyone each tick.
     db.update(schema.meetings).set({ summariesQueuedAt: new Date(now) }).where(eq(schema.meetings.id, meeting.id)).run();
     for (const { member, body } of await buildSummaries(meeting)) {

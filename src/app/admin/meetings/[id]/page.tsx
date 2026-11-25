@@ -46,9 +46,7 @@ export default async function AdminMeetingPage({ params }: { params: Promise<{ i
               <ActionButton action={pingRandomSpeaker.bind(null, meeting.id)}>🎲 Ping random speaker</ActionButton>
             </>
           )}
-          <Link href={`/admin/qr/${meeting.id}`} className="btn btn-ghost">QR poster</Link>
           <a href={MEETING_PAGE_URL} className="btn btn-ghost">Meeting page</a>
-          <Link href={`/tools?meeting=${meeting.id}`} className="btn btn-ghost">Tools</Link>
         </div>
       </div>
 
@@ -57,7 +55,7 @@ export default async function AdminMeetingPage({ params }: { params: Promise<{ i
           <p>
             {meeting.summariesQueuedAt
               ? `Recaps queued ${meeting.summariesQueuedAt.toLocaleString('en-GB')} — see the message log.`
-              : 'Recaps go out 10 minutes after finishing (late feedback still counts), once all recordings are transcribed.'}
+              : 'Recaps go out 10 minutes after finishing (late feedback still counts).'}
           </p>
           {meeting.summariesQueuedAt && (
             <form action={requeueSummaries.bind(null, meeting.id)} className="mt-2">
@@ -100,7 +98,7 @@ export default async function AdminMeetingPage({ params }: { params: Promise<{ i
               </li>
             ))}
           </ul>
-          {!guests.length && <p className="text-sm text-ink-soft">Guests check in by scanning the QR code, or are added from the timer.</p>}
+          {!guests.length && <p className="text-sm text-ink-soft">No guests recorded for this meeting.</p>}
         </Card>
       </div>
 

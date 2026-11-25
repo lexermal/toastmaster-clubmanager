@@ -56,36 +56,6 @@ export function roleLabel(r: Pick<MeetingRole, 'role' | 'slot'>) {
   return r.slot > 0 ? `${r.role} ${r.slot}` : r.role;
 }
 
-export interface Participant {
-  member: Member;
-  /** Role labels this person holds in the meeting. */
-  roles: string[];
-}
-
-/**
- * Everyone who can be timed / evaluated / voted for: role holders first, then all other members,
- * then guests of this meeting. Table Topics speakers are often people without a role.
- */
-export function meetingParticipants(meetingId: number): { withRole: Participant[]; others: Member[]; guests: Member[] } {
-  const byMember = new Map<number, Participant>();
-  for (const r of meetingRoles(meetingId)) {
-    if (!r.member) continue;
-    const p = byMember.get(r.member.id) ?? { member: r.member, roles: [] };
-    p.roles.push(roleLabel(r));
-    byMember.set(r.member.id, p);
-  }
-  const guests = meetingGuests(meetingId);
-  const taken = new Set([...byMember.keys(), ...guests.map((g) => g.id)]);
-  const others = db
-    .select()
-    .from(schema.members)
-    .where(eq(schema.members.isGuest, false))
-    .orderBy(asc(schema.members.name))
-    .all()
-    .filter((m) => !taken.has(m.id));
-  return { withRole: [...byMember.values()], others, guests };
-}
-
 /** Open slots of a meeting, in agenda order. Numbered so WhatsApp users can reply "take 3". */
 export function openRoles(meetingId: number) {
   return meetingRoles(meetingId).filter((r) => !r.memberId);

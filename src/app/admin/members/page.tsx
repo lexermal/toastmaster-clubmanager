@@ -38,7 +38,7 @@ export default function MembersPage() {
       </Card>
       <Card title={`Guests (${guests.length})`}>
         <ul className="divide-y divide-line">{guests.map(row)}</ul>
-        {!guests.length && <p className="text-ink-soft">Guests appear here when they check in via the meeting QR code.</p>}
+        {!guests.length && <p className="text-ink-soft">No guests yet.</p>}
       </Card>
     </div>
   );

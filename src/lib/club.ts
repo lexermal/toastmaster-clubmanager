@@ -34,6 +34,6 @@ export const PUBLIC_URL = (process.env.PUBLIC_URL ?? 'http://localhost:3000').re
 
 // Public pages (home, roles, membership, ...) live on the WordPress site; this app only links to them.
 export const WEBSITE_URL = (process.env.WEBSITE_URL ?? 'https://malmo-tm.infinityfreeapp.com').replace(/\/$/, '');
-/** WordPress page with the meeting tools plugin (agenda, feedback forms). Target of the QR code. */
+/** WordPress page with the meeting tools plugin (agenda, feedback forms). Linked from WhatsApp messages. */
 export const MEETING_PAGE_URL = (process.env.MEETING_PAGE_URL || WEBSITE_URL).replace(/\/$/, '');
 export const ROLES_URL = `${WEBSITE_URL}/roles/`;

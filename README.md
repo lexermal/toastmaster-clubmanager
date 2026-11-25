@@ -1,6 +1,6 @@
 # Club Manager: Malmö Toastmasters
 
-Meeting tools and WhatsApp automation for a Toastmasters club. Members mostly use it through WhatsApp:
+WhatsApp automation and admin for a Toastmasters club. Members mostly use it through WhatsApp:
 they get reminders, sign up for roles, and receive a personal recap after every meeting.
 
 ## What lives where
@@ -17,20 +17,8 @@ messages link to WordPress for role guides, membership and the meeting page (`ME
 
 ## Features (not in WordPress)
 
-### QR poster
-
-Printable poster (`/admin/qr/[id]`) with a QR code to the meeting page on WordPress (`MEETING_PAGE_URL`).
-The audience pages (agenda, feedback forms, voting, guest check-in) moved to the WordPress meeting tools
-plugin (`../toastmaster-wp-tools`).
-
-### Tools for role holders (`TOOLS_PASSWORD`)
-
-| Feature | Path |
-|---|---|
-| Timer: full-screen green / amber / red, presets per speech type, switch type while running, +10/30/60 s for a late start, vibration, screen stays on, "colours only" mode, saved per speaker | `/tools/timer` |
-| Ah-Counter: tap counters for filler words per speaker, saved per speaker | `/tools/ah-counter` |
-| Evaluation recorder: records spoken feedback in the browser; the worker transcribes it (OpenAI) and writes a short summary | `/tools/record` |
-| Quick-add a guest from any tool so they also get a recap | in all tools |
+The meeting tools (timer, Ah-Counter, evaluations, audience feedback, voting, guest check-in) live in the
+WordPress meeting tools plugin (`../toastmaster-wp-tools`), not here.
 
 ### WhatsApp (Baileys, worker)
 
@@ -52,12 +40,11 @@ plugin (`../toastmaster-wp-tools`).
 
 ### Personal recap after each meeting
 
-Sent 10 minutes after the meeting is finished (button in admin, or automatically 4 hours after the start),
-once all recordings are transcribed. Each person gets only what concerns them:
+Sent 10 minutes after the meeting is finished (button in admin, or automatically 4 hours after the start).
+Each person gets only what concerns them:
 
 - roles they held and votes they won
 - timing of each of their talks, with an on-time check (30 s grace)
-- recorded evaluation: AI summary plus the full transcript
 - anonymous audience notes, plus an AI summary when there are 3 or more
 - filler word counts
 - next step: one-tap link to take the same role again and a recommended next role (members),
@@ -87,10 +74,10 @@ once all recordings are transcribed. Each person gets only what concerns them:
 
 Two processes share one SQLite database (`$DATA_DIR/club.db`):
 
-- **Web app** (Next.js): meeting hub, tools, admin, claim links.
+- **Web app** (Next.js): admin, claim links.
 - **Worker** (`src/worker`), two independent loops every 20 s:
   - Everything that only needs our database: scheduling messages (`scheduler.ts`), polls and speaker pings
-    (`src/lib/engagement.ts`), transcribing recordings, building recaps (`summaries.ts`), and sending the
+    (`src/lib/engagement.ts`), building recaps (`summaries.ts`), and sending the
     outbox through WhatsApp, 2 s apart.
   - tmclub.eu: sync and the role write-back queue (`tmclub.ts`). It runs separately because a pending
     Cloudflare check can make a call wait up to 15 minutes.
@@ -113,7 +100,7 @@ Then in `/admin`:
 1. Scan the WhatsApp QR with the club phone (WhatsApp → Linked devices). Use a dedicated number.
 2. Pick the club group chat (the bot's number must be a member of the group).
 3. Add members' phone numbers under *Members*, or let them message the bot `I am <name>`.
-4. Set `MEETING_PAGE_URL` and print the QR poster (`/admin/qr/<id>`); one print works for every meeting.
+4. Set `MEETING_PAGE_URL` to the WordPress meeting page.
 
 **The tmclub.eu account must be a club officer**: only officers can assign roles for other members.
 
@@ -124,7 +111,7 @@ docker compose up -d --build   # expects ../toastmaster-club-api next to this re
 ```
 
 The image runs the web app and the worker (under `xvfb`, because Cloudflare blocks headless Chromium).
-Data (DB, WhatsApp session, tmclub session, recordings) lives in `./data`.
+Data (DB, WhatsApp session, tmclub session) lives in `./data`.
 
 ## When tmclub.eu needs a human
 
@@ -145,7 +132,7 @@ about a year (kept in `data/tmclub-session.json`). When Cloudflare asks for "Ver
 
 - **WhatsApp via Baileys is unofficial.** It links like WhatsApp Web. Keep message volume low (it already
   spaces sends) and don't use a personal number: there is a small risk of the number being banned.
-- **Club details** (name, venue, schedule, fees, links) are in `src/lib/club.ts`. Role guides, timing presets and
-  filler words are in `src/lib/roles.ts`. Message texts are in `src/lib/messages.ts`.
+- **Club details** (name, venue, schedule, fees, links) are in `src/lib/club.ts`. Role guides and timing
+  helpers are in `src/lib/roles.ts`. Message texts are in `src/lib/messages.ts`.
 - **Schema changes:** edit `src/lib/db/schema.ts`, run `pnpm db:generate`; migrations apply on startup.
 - `tmclub-api` is linked from `../toastmaster-club-api` until it is published to npm.

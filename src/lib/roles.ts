@@ -1,4 +1,4 @@
-/** Role guides (linked from WhatsApp reminders) and timing presets for the timer tool. */
+/** Role guides (linked from WhatsApp reminders) and timing helpers for recaps. */
 
 export interface RoleGuide {
   slug: string;
@@ -24,7 +24,7 @@ export const ROLE_GUIDES: RoleGuide[] = [
     summary: 'You keep the meeting on schedule and show each speaker green, amber and red signals.',
     before: [
       'Check the agenda for each speech’s green / amber / red times.',
-      'Ask the club for the tools password — you will run the timer on your phone.',
+      'Open the timer on the club’s meeting page on your phone.',
     ],
     during: [
       'Explain the timing signals briefly when the Toastmaster introduces you.',
@@ -44,7 +44,7 @@ export const ROLE_GUIDES: RoleGuide[] = [
     match: /ah.?counter/i,
     level: 2,
     summary: 'You listen for filler words (ah, um, so, like…) and report them kindly to help speakers improve.',
-    before: ['Get the tools password to use the Ah-Counter on your phone.'],
+    before: ['Open the Ah-Counter on the club’s meeting page on your phone.'],
     during: [
       'Explain your role in one or two sentences when introduced.',
       'Tap the counter for each filler word per speaker.',
@@ -172,25 +172,6 @@ export function isSpeechRole(role: string) {
   return guideForRole(role)?.slug === 'speaker';
 }
 
-export interface TimingPreset {
-  key: string;
-  label: string;
-  green: number;
-  amber: number;
-  red: number;
-}
-
-/** Seconds. Standard Toastmasters signals. */
-export const TIMING_PRESETS: TimingPreset[] = [
-  { key: 'tabletopic', label: 'Table Topic', green: 60, amber: 90, red: 120 },
-  { key: 'speech-5-7', label: 'Speech 5–7 min', green: 300, amber: 360, red: 420 },
-  { key: 'icebreaker', label: 'Ice Breaker 4–6 min', green: 240, amber: 300, red: 360 },
-  { key: 'speech-8-10', label: 'Speech 8–10 min', green: 480, amber: 540, red: 600 },
-  { key: 'evaluation', label: 'Evaluation 2–3 min', green: 120, amber: 150, red: 180 },
-  { key: 'report', label: 'Role report 1–2 min', green: 60, amber: 90, red: 120 },
-  { key: 'ge', label: 'General Evaluation 5–7 min', green: 300, amber: 360, red: 420 },
-];
-
 /** Toastmasters contests allow 30 s grace either side of the window. */
 export const GRACE_SEC = 30;
 
@@ -204,8 +185,6 @@ export function formatDuration(sec: number) {
   const s = Math.max(0, Math.round(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
-
-export const FILLER_WORDS = ['ah', 'um', 'er', 'so', 'like', 'and', 'you know', 'well', 'repeat'];
 
 export const VOTE_CATEGORIES = [
   { key: 'speaker', label: 'Best Speaker' },
