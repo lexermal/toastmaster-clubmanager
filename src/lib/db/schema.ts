@@ -227,6 +227,37 @@ export const pollVotes = sqliteTable(
   (t) => [uniqueIndex('poll_voter').on(t.pollId, t.memberId)],
 );
 
+/** Which WordPress meeting (TM Meeting Tools plugin) belongs to which easy-Speak meeting. */
+export const wpMeetings = sqliteTable('wp_meetings', {
+  id: id(),
+  tmMeetingId: text('tm_meeting_id').notNull().unique(),
+  wpMeetingId: integer('wp_meeting_id').notNull(),
+  startsAt: integer('starts_at', { mode: 'timestamp_ms' }).notNull(),
+  /** Start plus the red time of every agenda item, the same end the WordPress plugin uses. */
+  endsAt: integer('ends_at', { mode: 'timestamp_ms' }).notNull(),
+  syncedAt: integer('synced_at', { mode: 'timestamp_ms' }).notNull(),
+  /** Set once every speaker of the meeting got (or was skipped for) the feedback e-mail. */
+  feedbackDoneAt: integer('feedback_done_at', { mode: 'timestamp_ms' }),
+});
+
+/** Feedback e-mails to speakers, one per speech (WordPress agenda item). */
+export const feedbackEmails = sqliteTable(
+  'feedback_emails',
+  {
+    id: id(),
+    wpMeetingId: integer('wp_meeting_id').notNull(),
+    agendaItemId: integer('agenda_item_id').notNull(),
+    personName: text('person_name').notNull(),
+    tmUserId: text('tm_user_id'),
+    status: text('status', { enum: ['pending', 'sent', 'skipped', 'error'] }).notNull().default('pending'),
+    /** Why it was skipped, or the last error. */
+    detail: text('detail'),
+    attempts: integer('attempts').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('feedback_email_item').on(t.wpMeetingId, t.agendaItemId)],
+);
+
 export const settings = sqliteTable('settings', {
   key: text('key').primaryKey(),
   value: text('value'),

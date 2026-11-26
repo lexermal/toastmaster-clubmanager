@@ -24,6 +24,8 @@ export default async function AdminDashboard() {
   const lastSync = getSetting('tm_last_sync');
   const syncError = getSetting('tm_sync_error');
   const syncRequested = getSetting('tm_sync_requested') === '1';
+  const wpLastSync = getSetting('wp_last_sync');
+  const wpErrors = [getSetting('wp_sync_error'), getSetting('wp_feedback_error')].filter(Boolean);
 
   const pendingJobs = db.select().from(schema.tmJobs).where(eq(schema.tmJobs.status, 'pending')).all().length;
   // Recent failures only; old ones are history.
@@ -76,6 +78,14 @@ export default async function AdminDashboard() {
             Last sync: {lastSync ? `${new Date(lastSync).toLocaleString('en-GB')} (${ago(lastSync)})` : 'never'}
           </p>
           {syncError && <p className="mt-2 text-sm text-stop">Last error: {syncError}</p>}
+          <p className="mt-2 text-sm">
+            WordPress sync: {wpLastSync ? `${new Date(wpLastSync).toLocaleString('en-GB')} (${ago(wpLastSync)})` : 'never'}
+          </p>
+          {wpErrors.map((e) => (
+            <p key={e} className="mt-2 text-sm text-stop">
+              WordPress: {e}
+            </p>
+          ))}
           <p className="mt-2 text-sm">
             {pendingJobs ? `${pendingJobs} role change${pendingJobs === 1 ? '' : 's'} waiting to be written to tmclub.eu.` : 'All role changes are on tmclub.eu.'}
           </p>

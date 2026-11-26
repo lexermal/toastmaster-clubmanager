@@ -7,7 +7,8 @@ import { formatTime } from '../lib/format';
 import { roleLabel } from '../lib/meetings';
 import { enqueue } from '../lib/outbox';
 import { normalizePhone } from '../lib/phone';
-import { getSetting, setSetting } from '../lib/settings';
+import { alert, resetAlert } from '../lib/telegram';
+import { getSetting, setSetting, type SettingKey } from '../lib/settings';
 
 const MIN = 60_000;
 /** Wait before retry n (temporary errors only); the last value repeats. */
@@ -36,14 +37,22 @@ function tm() {
   return client;
 }
 
+/** The shared, browser-backed easy-Speak session (also used by the WordPress sync and feedback e-mails). */
+export const tmApi = () => tm();
+
 export const tmConfigured = () => Boolean(process.env.TMCLUB_USER && process.env.TMCLUB_PASSWORD);
 
 // ---- Health state ------------------------------------------------------------------------------
 
 /** Cloudflare wants a human: show the link in admin and send it to the officers on WhatsApp. */
 function announceHumanCheck(url: string, expiresAt: Date) {
+  // Also in the log: with WhatsApp off (wordpress-only mode) this is the only place the link shows up.
+  console.log(`[tmclub] human check needed: ${url} (valid until ${expiresAt.toISOString()})`);
+  void alert(`human-check:${url}`, `tmclub.eu needs a human check (Cloudflare). Open ${url} and tick the box. Valid until ${formatTime(expiresAt)}.`, 0);
   setSetting('tm_state', 'needs-human');
   setSetting('tm_verify_url', url);
+  const tokens: string[] = JSON.parse(getSetting('tm_verify_tokens') ?? '[]');
+  setSetting('tm_verify_tokens', JSON.stringify([...tokens, new URL(url).pathname].slice(-50)));
   setSetting('tm_verify_expires', expiresAt.toISOString());
   for (const phone of adminPhones()) {
     enqueue({
@@ -79,6 +88,11 @@ function markBlocked(e: unknown) {
   const wasBlocked = getSetting('tm_state') === 'blocked';
   setSetting('tm_state', 'blocked');
   setSetting('tm_state_reason', reason);
+  if (!wasBlocked) {
+    setSetting('tm_blocked_at', new Date().toISOString());
+    const retry = process.env.WORKER_MODE === 'wordpress-only' ? 'It retries by itself in 6 hours, or open any earlier check link to get a fresh check right away.' : 'Press "Retry now" in the club admin.';
+    void alert('tm-blocked', `tmclub.eu work is paused: ${reason}. ${retry}`, 0);
+  }
   setSetting('tm_verify_url', null);
   setSetting('tm_verify_expires', null);
   if (!wasBlocked) {
@@ -94,7 +108,9 @@ function markBlocked(e: unknown) {
 }
 
 function markOk() {
-  if (getSetting('tm_state') === 'ok') return;
+  const state = getSetting('tm_state');
+  if (state === 'ok') return;
+  if (state) void alert('tm-ok', 'tmclub.eu works again.', 0);
   setSetting('tm_state', 'ok');
   setSetting('tm_state_reason', null);
   setSetting('tm_verify_url', null);
@@ -106,25 +122,47 @@ function markOk() {
  * sticky on purpose (new browsers make Cloudflare stricter), so only an admin's "Retry now" re-arms it.
  */
 export async function tmReady() {
+  // No web app (and so no "Retry now" button) in wordpress-only mode: retry a pause after 6 hours instead.
+  const blockedAt = getSetting('tm_blocked_at');
+  if (process.env.WORKER_MODE === 'wordpress-only' && getSetting('tm_state') === 'blocked' && blockedAt && Date.now() - Date.parse(blockedAt) > 6 * 3600_000) {
+    setSetting('tm_reset_requested', '1');
+  }
   if (getSetting('tm_reset_requested') === '1') {
     setSetting('tm_reset_requested', null);
     (await client?.catch(() => undefined))?.resetClearance();
     client = undefined; // also retries a rejected login with fresh credentials
-    markOk();
+    // Not "ok" yet: markOk() (and its "works again" alert) only after the next call really succeeds.
+    if (getSetting('tm_state') === 'blocked') setSetting('tm_state', 'retrying');
+    // Run a sync now, so a fresh check (or success) follows right away instead of at the next scheduled sync.
+    setSetting('tm_sync_requested', '1');
   }
   return getSetting('tm_state') !== 'blocked';
 }
 
+/** Consecutive failures per task, for alerts. */
+const failures = new Map<string, number>();
+const ALERT_AFTER = 3;
+
 /** Runs a tmclub task and updates the health state. Returns the failure kind, if any. */
-export async function guarded(name: string, fn: () => Promise<unknown>): Promise<Failure | undefined> {
+export async function guarded(name: string, fn: () => Promise<unknown>, errorKey: SettingKey = 'tm_sync_error'): Promise<Failure | undefined> {
   try {
     await fn();
     markOk();
+    if ((failures.get(name) ?? 0) >= ALERT_AFTER) {
+      resetAlert(`failing:${name}`);
+      void alert(`ok:${name}`, `${name} works again.`, 0);
+    }
+    failures.set(name, 0);
   } catch (e) {
     const kind = classify(e);
-    console.error(`[tmclub] ${name} failed (${kind}):`, e instanceof Error ? e.message : e);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[tmclub] ${name} failed (${kind}):`, msg);
     if (kind === 'blocked') markBlocked(e);
-    else setSetting('tm_sync_error', e instanceof Error ? e.message : String(e));
+    else setSetting(errorKey, msg);
+    // One failed run is usually a hiccup (the free WordPress host is flaky); a few in a row are worth a message.
+    const n = (failures.get(name) ?? 0) + 1;
+    failures.set(name, n);
+    if (kind === 'temporary' && n >= ALERT_AFTER) void alert(`failing:${name}`, `${name} failed ${n} times in a row: ${msg}`);
     return kind;
   }
 }

@@ -70,6 +70,35 @@ Each person gets only what concerns them:
 - Role sign-ups from WhatsApp, the poll and claim links are confirmed right away and written to tmclub.eu
   in the background, with retries (see "When tmclub.eu needs a human" below).
 
+### Sync to WordPress and feedback e-mails
+
+When `WP_URL`, `WP_USER` and `WP_APP_PASSWORD` are set, the worker pushes tmclub.eu into the WordPress
+meeting tools plugin (abilities over REST, with an application password of a WordPress admin):
+
+1. **Meetings**: every meeting on the tmclub.eu sign-up board gets a WordPress meeting with the same date and
+   start time as tmclub.eu shows it (new ones start from the standard agenda, which opens with a 15 minute
+   Meet and Greet).
+2. **Members**: everyone attending (in the room or online) or holding a role, as "First L." (first name and
+   the first letter of the last name), through `sync-members`, with their tmclub.eu user id as Toastmasters
+   ID. That bumps their "last synced" date in WordPress; WordPress deletes members it hasn't seen for the
+   number of days set in its settings (default 60).
+3. **Roles**: the people on each agenda line, mapped from tmclub.eu role names (`ROLE_MAP` in
+   `src/worker/wpSync.ts`). Open roles clear the name; table topic speakers added on the day are left alone.
+   Only differences are written.
+
+How often (`src/worker/wpSchedule.ts`): every 6 hours; on a meeting day every hour; from 3 hours before the
+start every 15 minutes until the meeting ends; every minute from 20 minutes before to 20 minutes after the
+start. In the faster modes only that day's meeting is synced. "Sync now" in admin also triggers it.
+
+**Feedback e-mails**: 30 minutes after a meeting's planned end (start plus all agenda times, the same end
+WordPress uses), each speaker with written feedback (audience notes and evaluations) gets it by e-mail,
+sent through easy-Speak, one e-mail per worker tick. For now only the easy-Speak ids in
+`FEEDBACK_EMAIL_ALLOWED_TM_IDS` get one (default: Alex W. only); the others are logged as skipped in the
+`feedback_emails` table.
+
+The live WordPress host (InfinityFree) answers non-browser requests with a JavaScript cookie check; the
+client in `src/lib/wordpress.ts` solves it the way the browser does.
+
 ## How it works
 
 Two processes share one SQLite database (`$DATA_DIR/club.db`):
