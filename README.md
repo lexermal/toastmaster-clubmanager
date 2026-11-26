@@ -93,8 +93,8 @@ start. In the faster modes only that day's meeting is synced. "Sync now" in admi
 **Feedback e-mails**: 30 minutes after a meeting's planned end (start plus all agenda times, the same end
 WordPress uses), each speaker with written feedback (audience notes and evaluations) gets it by e-mail,
 sent through easy-Speak, one e-mail per worker tick. For now only the easy-Speak ids in
-`FEEDBACK_EMAIL_ALLOWED_TM_IDS` get one (default: Alex W. only); the others are logged as skipped in the
-`feedback_emails` table.
+`FEEDBACK_EMAIL_ALLOWED_TM_IDS` get one (default: Alex W. only; `*` allows everyone, except in
+`wordpress-only` mode); the others are logged as skipped in the `feedback_emails` table.
 
 The live WordPress host (InfinityFree) answers non-browser requests with a JavaScript cookie check; the
 client in `src/lib/wordpress.ts` solves it the way the browser does.
@@ -113,6 +113,26 @@ Two processes share one SQLite database (`$DATA_DIR/club.db`):
 
 Every message goes through the outbox and is visible in the admin message log. Messages are idempotent
 (`outbox.dedupe_key`), so restarts don't resend.
+
+### Worker modes (`WORKER_MODE`)
+
+- Unset (or anything else): everything runs.
+- `wordpress-only`: the current alpha test. Only the worker runs, and it only reads tmclub.eu, syncs it to
+  WordPress and sends the feedback e-mails (strictly to the allow list, `*` is ignored). No WhatsApp, no
+  reminders or recaps, no writes to tmclub.eu, no web app. It refuses to start without `WP_URL`, `WP_USER`
+  and `WP_APP_PASSWORD`. As there is no "Retry now" button, a paused tmclub.eu retries by itself after
+  6 hours.
+
+### Alerts on Telegram
+
+With `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` set, the worker messages the operator on Telegram
+(`src/lib/telegram.ts`; without them it stays quiet):
+
+- the worker started (at most once per 30 minutes, so a crash loop doesn't spam);
+- tmclub.eu needs a human check (with the link), tmclub.eu work is paused, and when it works again;
+- a task (tmclub.eu sync, role queue, WordPress sync, feedback e-mails) failed 3 times in a row, and when it
+  works again (repeats at most once an hour);
+- a feedback e-mail failed.
 
 ## Setup
 
@@ -133,6 +153,26 @@ Then in `/admin`:
 
 **The tmclub.eu account must be a club officer**: only officers can assign roles for other members.
 
+### Environment variables
+
+| Variable | What for |
+|---|---|
+| `PUBLIC_URL` | Public URL of this app, used in WhatsApp links and claim links. |
+| `WEBSITE_URL`, `MEETING_PAGE_URL` | The WordPress site and its meeting tools page, linked from WhatsApp. |
+| `ADMIN_PASSWORD` | Admin login. |
+| `APP_SECRET` | Random string that signs cookies and claim links. |
+| `DATA_DIR` | Folder for the SQLite DB, the WhatsApp session and the tmclub.eu session. |
+| `TMCLUB_USER`, `TMCLUB_PASSWORD`, `TMCLUB_CLUB_ID` | easy-Speak officer account and club. |
+| `TMCLUB_VERIFY_PORT`, `TMCLUB_VERIFY_URL` | Port (default `8732`) and public HTTPS address of the human-check page. |
+| `VERIFY_GATEWAY_PORT` | Optional: port of the always-on front for the human-check page (see below). |
+| `ADMIN_PHONES` | Officers' WhatsApp numbers (comma-separated) for tmclub.eu alerts. |
+| `OPENAI_API_KEY`, `OPENAI_SUMMARY_MODEL` | AI summary of audience notes in recaps (model default `gpt-5-mini`). |
+| `WHATSAPP_ENABLED` | `false` runs the worker without WhatsApp; messages stay in the outbox. |
+| `WORKER_MODE` | `wordpress-only` or unset, see "Worker modes". |
+| `WP_URL`, `WP_USER`, `WP_APP_PASSWORD` | WordPress sync and feedback e-mails; empty turns them off. |
+| `FEEDBACK_EMAIL_ALLOWED_TM_IDS` | easy-Speak ids that may get feedback e-mails, `*` for all. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | Operator alerts on Telegram. |
+
 ### Docker
 
 ```bash
@@ -142,13 +182,38 @@ docker compose up -d --build   # expects ../toastmaster-club-api next to this re
 The image runs the web app and the worker (under `xvfb`, because Cloudflare blocks headless Chromium).
 Data (DB, WhatsApp session, tmclub session) lives in `./data`.
 
+### Kubernetes (Helm)
+
+The chart in `helm/clubmanager` runs one pod (never two: one SQLite file, one easy-Speak session) with the
+data on a PVC that is kept when the release is removed.
+
+```bash
+helm upgrade --install clubmanager helm/clubmanager -n <namespace> --set image.tag=<tag>
+```
+
+- `mode`: `wordpress-only` (default, worker only) or `full` (web app and worker).
+- `existingSecret` (default `clubmanager`): a Secret you create yourself with `TMCLUB_USER`,
+  `TMCLUB_PASSWORD`, `WP_USER`, `WP_APP_PASSWORD` and `TELEGRAM_BOT_TOKEN`. Other settings go in `env`
+  (`WP_URL`, `FEEDBACK_EMAIL_ALLOWED_TM_IDS`, `TMCLUB_CLUB_ID`, `TMCLUB_VERIFY_PORT`, `TELEGRAM_CHAT_ID`).
+- `verify.host`: public host for the human-check page. Creates a Service and an Ingress to the verify
+  gateway and sets `TMCLUB_VERIFY_URL` and `VERIFY_GATEWAY_PORT`. Without it, use
+  `kubectl port-forward deploy/clubmanager 8732` and open the logged link on `localhost:8732`.
+- `watchdog`: a CronJob (every 10 minutes) that sends a Telegram message when the deployment has been
+  unavailable for more than 10 minutes, with the pod state. The worker can't report that itself.
+
 ## When tmclub.eu needs a human
 
 easy-Speak sits behind Cloudflare. Usually the worker's browser passes by itself and the cookie lasts
 about a year (kept in `data/tmclub-session.json`). When Cloudflare asks for "Verify you are human":
 
 - The worker opens a live view of its browser on port `8732` (`TMCLUB_VERIFY_URL` = its public HTTPS
-  address) and sends the link to `ADMIN_PHONES` on WhatsApp; `/admin` shows a red banner with it.
+  address) and sends the link to `ADMIN_PHONES` on WhatsApp and to Telegram; `/admin` shows a red banner
+  with it.
+- With `VERIFY_GATEWAY_PORT` set, the worker also runs a small always-on front for that page
+  (`src/worker/verifyGateway.ts`), which is what the public address should point to. The check itself
+  only lives under a random token path in the link. Anything else (the root, guesses, crawlers) gets a
+  plain landing page, so the domain never shows "Bad Gateway". An older check link still works: it leads
+  to the current check, or starts a fresh one if the last one expired unsolved.
 - Meanwhile only tmclub.eu work waits. Reminders, recaps, polls, pings and the website keep running,
   and WhatsApp sign-ups are confirmed right away and queued.
 - If nobody solves it in time (or the login is rejected), tmclub.eu work stays paused until an
