@@ -1,0 +1,151 @@
+@import 'tailwindcss';
+
+/* Toastmasters brand colours (True Maroon, Loyal Blue, Happy Yellow) set on warm paper. */
+:root {
+  --paper: #f5efe4;
+  --paper-2: #ece3d3;
+  --card: #fffaf2;
+  --ink: #1d1916;
+  --ink-soft: #5c524a;
+  --line: #d9cdb9;
+  --maroon: #772432;
+  --maroon-ink: #fffaf2;
+  --blue: #004165;
+  --yellow: #f2df74;
+  --go: #2f8f4e;
+  --wait: #e0a526;
+  --stop: #c4352c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #15110f;
+    --paper-2: #1f1916;
+    --card: #231c19;
+    --ink: #f3ebde;
+    --ink-soft: #b4a797;
+    --line: #3a302a;
+    --maroon: #d0566a;
+    --maroon-ink: #15110f;
+    --blue: #6fb4dc;
+    --yellow: #f2df74;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-maroon: var(--maroon);
+  --color-maroon-ink: var(--maroon-ink);
+  --color-blue: var(--blue);
+  --color-yellow: var(--yellow);
+  --color-go: var(--go);
+  --color-wait: var(--wait);
+  --color-stop: var(--stop);
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-sans: var(--font-instrument), system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+}
+
+html {
+  color-scheme: light dark;
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background: var(--paper);
+  font-family: var(--font-sans);
+}
+
+/* Faint paper grain so large flat areas don't look digital. */
+.grain {
+  position: relative;
+  isolation: isolate;
+}
+.grain::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0.45 0 0 0 0 0.35 0 0 0 0 0.25 0 0 0 .12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise {
+  animation: rise 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes glow {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.field {
+  width: 100%;
+  border-radius: 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--card);
+  padding: 0.7rem 0.9rem;
+  color: var(--ink);
+  font-size: 1rem;
+}
+.field:focus {
+  outline: 2px solid var(--maroon);
+  outline-offset: 1px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  padding: 0.7rem 1.3rem;
+  font-weight: 600;
+  transition:
+    transform 0.15s,
+    background 0.15s,
+    opacity 0.15s;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn:disabled {
+  opacity: 0.5;
+}
+.btn-primary {
+  background: var(--maroon);
+  color: var(--maroon-ink);
+}
+.btn-primary:hover {
+  filter: brightness(1.08);
+}
+.btn-ghost {
+  border: 1px solid var(--line);
+  background: var(--card);
+}
+.btn-ghost:hover {
+  border-color: var(--ink-soft);
+}

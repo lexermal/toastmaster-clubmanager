@@ -1,0 +1,49 @@
+image:
+  repository: registry.rimori.se/language/toastmaster-clubmanager
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets:
+  - name: rimori-registry
+
+# wordpress-only: the alpha test. Only the worker runs, and it only reads tmclub.eu, syncs it to
+# WordPress and sends feedback e-mails to the allow list. No WhatsApp, no reminders or recaps, no writes
+# to tmclub.eu, no web app. "full" runs the web app and every worker feature (start.sh).
+mode: wordpress-only
+
+# Secret with TMCLUB_USER, TMCLUB_PASSWORD, WP_USER, WP_APP_PASSWORD (created outside the chart,
+# so no credentials live in git).
+existingSecret: clubmanager
+
+env:
+  WP_URL: https://malmo-tm.infinityfreeapp.com
+  # Alpha: only Alex W. (easy-Speak user 112036) gets feedback e-mails.
+  FEEDBACK_EMAIL_ALLOWED_TM_IDS: "112036"
+  # Malmö Toastmasters. Without it easy-Speak uses whichever club the account opened last.
+  TMCLUB_CLUB_ID: "541"
+  TMCLUB_VERIFY_PORT: "8732"
+  # Your Telegram chat with the alerts bot; the bot token is TELEGRAM_BOT_TOKEN in the secret.
+  TELEGRAM_CHAT_ID: ""
+
+# Public address of the Cloudflare "verify you are human" page. The page only answers while a check is
+# pending, behind a random token in the path; the link comes by Telegram.
+verify:
+  host: ""
+  ingressClassName: traefik
+
+# Alerts on Telegram when the worker has been down for more than 10 minutes (the worker can't report
+# that itself). Uses TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID from the same secret and env.
+watchdog:
+  enabled: true
+  schedule: "*/10 * * * *"
+  image: alpine/k8s:1.28.15
+
+persistence:
+  size: 1Gi
+  storageClass: longhorn
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1536Mi

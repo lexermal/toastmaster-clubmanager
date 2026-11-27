@@ -1,0 +1,5 @@
+Mode: {{ .Values.mode }}
+Logs:        kubectl -n {{ .Release.Namespace }} logs -f deploy/{{ include "clubmanager.name" . }}
+Human check: the link comes by Telegram{{ if .Values.verify.host }} (https://{{ .Values.verify.host }}/…){{ end }}. Without a host: when the log says "human check needed", run
+             kubectl -n {{ .Release.Namespace }} port-forward deploy/{{ include "clubmanager.name" . }} 8732
+             and open the logged link with localhost:8732.

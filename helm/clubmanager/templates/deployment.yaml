@@ -1,0 +1,72 @@
+{{- if not (has .Values.mode (list "wordpress-only" "full")) }}
+{{- fail "mode must be wordpress-only or full" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "clubmanager.name" . }}
+  labels: {{- include "clubmanager.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # One SQLite file and one easy-Speak browser session: never two pods at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "clubmanager.labels" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "clubmanager.labels" . | nindent 8 }}
+      annotations:
+        checksum/env: {{ toJson .Values.env | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: clubmanager
+          image: "{{ .Values.image.repository }}:{{ required "image.tag is required" .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if eq .Values.mode "wordpress-only" }}
+          # Worker only; Cloudflare rejects headless Chromium, so it runs a real one under xvfb.
+          # Wrapped in sh: xvfb-run hangs forever when it is PID 1 (it waits for a signal PID 1 never gets).
+          command: ["sh", "-c", "xvfb-run -a --server-args='-screen 0 1280x800x24' node --import tsx src/worker/index.ts"]
+          {{- end }}
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: WORKER_MODE
+              value: {{ .Values.mode | quote }}
+            {{- if eq .Values.mode "wordpress-only" }}
+            # Belt and braces: WhatsApp stays off even if the mode check were bypassed.
+            - name: WHATSAPP_ENABLED
+              value: "false"
+            {{- end }}
+            {{- if .Values.verify.host }}
+            - name: TMCLUB_VERIFY_URL
+              value: "https://{{ .Values.verify.host }}"
+            # Always-on front for the check page, so the domain doesn't show "Bad Gateway" between checks.
+            - name: VERIFY_GATEWAY_PORT
+              value: "8080"
+            {{- end }}
+            {{- range $k, $v := .Values.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          ports:
+            # Cloudflare "verify you are human" page, only open while a check is pending.
+            # Reach it with: kubectl port-forward deploy/{{ include "clubmanager.name" . }} 8732
+            - name: verify
+              containerPort: 8732
+            - name: gateway
+              containerPort: 8080
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "clubmanager.name" . }}-data

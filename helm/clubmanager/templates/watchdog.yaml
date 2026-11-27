@@ -1,0 +1,85 @@
+{{- if .Values.watchdog.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "clubmanager.name" . }}-watchdog
+  labels: {{- include "clubmanager.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "clubmanager.name" . }}-watchdog
+  labels: {{- include "clubmanager.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "clubmanager.name" . | quote }}]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "clubmanager.name" . }}-watchdog
+  labels: {{- include "clubmanager.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "clubmanager.name" . }}-watchdog
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "clubmanager.name" . }}-watchdog
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "clubmanager.name" . }}-watchdog
+  labels: {{- include "clubmanager.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.watchdog.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 3600
+      template:
+        spec:
+          serviceAccountName: {{ include "clubmanager.name" . }}-watchdog
+          restartPolicy: Never
+          containers:
+            - name: watchdog
+              image: {{ .Values.watchdog.image }}
+              env:
+                - name: DEPLOY
+                  value: {{ include "clubmanager.name" . | quote }}
+                - name: SELECTOR
+                  value: app.kubernetes.io/instance={{ .Release.Name }}
+                - name: TELEGRAM_CHAT_ID
+                  value: {{ .Values.env.TELEGRAM_CHAT_ID | quote }}
+                - name: TELEGRAM_BOT_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ .Values.existingSecret }}
+                      key: TELEGRAM_BOT_TOKEN
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  # Alert only when the deployment has been unavailable for 10+ minutes, so a normal
+                  # deploy or image pull doesn't trigger it.
+                  since=$(kubectl get deploy "$DEPLOY" -o json | jq -r '.status.conditions[]? | select(.type=="Available" and .status=="False") | .lastTransitionTime')
+                  if [ -z "$since" ]; then
+                    ready=$(kubectl get deploy "$DEPLOY" -o jsonpath='{.status.readyReplicas}')
+                    [ "${ready:-0}" -ge 1 ] && exit 0
+                    since=$(date -u -d @$(( $(date +%s) - 3600 )) +%Y-%m-%dT%H:%M:%SZ)
+                  fi
+                  down=$(( $(date +%s) - $(date -u -d "$(echo "$since" | sed 's/T/ /; s/Z//')" +%s) ))
+                  [ "$down" -lt 600 ] && exit 0
+                  why=$(kubectl get pods -l "$SELECTOR" -o json | jq -r '[.items[].status.containerStatuses[]? | (.state | to_entries[0] | "\(.key) \(.value.reason // "")") + " (restarts: \(.restartCount))"] | join(", ")')
+                  text="🚨 Club manager is DOWN for $(( down / 60 )) min. Pod: ${why:-no pod}. Check: kubectl -n {{ .Release.Namespace }} describe deploy/$DEPLOY"
+                  curl -s -o /dev/null -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${text}"
+{{- end }}
